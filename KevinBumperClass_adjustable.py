@@ -1,10 +1,10 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from ParticleTracerLatticeClass import ParticleTracerLattice
 from SwarmTracerClass import SwarmTracer
 from helperTools import *
 from shapely.geometry import Polygon, MultiPolygon
 from sklearn.neighbors import NearestNeighbors
-
 
 #  made 6/17/2022, after four rounds of optimizing.
 #  use KevinBumper.clone_bumper() to create an identical bumper without an end, so more elements can be added.
@@ -33,11 +33,12 @@ def y0_max(r, b_max):
 
 class Bumper:
     def __init__(self, r1p1, l1, d1, L, phi, r2, l2, d2, n, start=None, leftwards=False, long_off=None, trace=True,
-                 focus_off=0.0, actual_he=False, real_mag=None, grade=48):
+                 focus_off=0.0, actual_he=False, real_mag=None, grade='N52'):
         self.r1p1 = r1p1
         self.magwidth1 = r1p1 * np.tan(np.pi / 12) * 2 if real_mag is None else real_mag[0]
         self.r1p2 = r1p1 + r1p1 * np.tan(np.pi / 12) * 2
         self.magwidth2 = self.r1p2 * np.tan(np.pi / 12) * 2 if real_mag is None else real_mag[1]
+        self.grade = grade
 
         self.l1 = l1
         self.d1 = d1
@@ -57,7 +58,7 @@ class Bumper:
         self.focus_off = focus_off
 
         self.PTL: ParticleTracerLattice = self.create_lattice()
-        self.helium_tube = self.create_he_tube(l1 + self.r1p2 * 3 + d1 + l2 + r2 * 3 + d2, actual_he)
+        self.helium_tube = self.create_he_tube(l1 + self.r1p2 * 3 + d1 + l2 + r2 * 3 + d2, actual=actual_he)
         self.he_tube_intersect = self.tube_intersection()
         if trace:
             self.swarm = self.trace_simulated_focus(n)
@@ -73,7 +74,7 @@ class Bumper:
         l2_plus_fringe = self.l2 + self.r2 * 3
 
         PTL = ParticleTracerLattice(latticeType='injector', initialAngle=self.angle,
-                                    initialLocation=(self.long_off, self.start))
+                                    initialLocation=(self.long_off, self.start), magnetGrade=self.grade)
         PTL.add_Halbach_Lens_Sim((self.r1p1, self.r1p2), l1_plus_fringe,
                                  magnetWidth=(self.magwidth1, self.magwidth2))
         PTL.add_Drift(d_fix, .04, inputTiltAngle=-a1, outputTiltAngle=-a2)
@@ -85,14 +86,13 @@ class Bumper:
     def create_he_tube(self, tube_l, actual=False):
         height = 0.006 if actual else 0.0075
         if not self.leftwards:
-            helium_tube = Polygon([(self.r1p2 * 1.5 + self.long_off + self.focus_off, -height),
-                                   (self.r1p2 * 1.5 + self.long_off + self.focus_off, height),
-                                   (tube_l, height + tube_l * 0.00338), (tube_l, -height - tube_l * 0.00338)])
+            return Polygon([(self.r1p2 * 1.5 + self.long_off + self.focus_off, -height),
+                            (self.r1p2 * 1.5 + self.long_off + self.focus_off, height),
+                            (tube_l, height + tube_l * 0.00338), (tube_l, -height - tube_l * 0.00338)])
         else:
-            helium_tube = Polygon([(-(self.r1p2 * 1.5 + self.long_off + self.focus_off), -height),
-                                   (-(self.r1p2 * 1.5 + self.long_off + self.focus_off), height),
-                                   (-tube_l, height + tube_l * 0.00338), (-tube_l, -height - tube_l * 0.00338)])
-        return helium_tube
+            return Polygon([(-(self.r1p2 * 1.5 + self.long_off + self.focus_off), -height),
+                            (-(self.r1p2 * 1.5 + self.long_off + self.focus_off), height),
+                            (-tube_l, height + tube_l * 0.00338), (-tube_l, -height - tube_l * 0.00338)])
 
     def trace_simulated_focus(self, n):
         st = SwarmTracer(self.PTL)
@@ -119,7 +119,7 @@ class Bumper:
         return swarm
 
     def plot_trace(self):
-        plt.plot(*self.helium_tube.exterior.xy)
+        plt.plot(*self.helium_tube.exterior.xy, color='blue')
         if isinstance(self.he_tube_intersect, Polygon):
             plt.plot(*self.he_tube_intersect.exterior.xy, color='red')
         elif isinstance(self.he_tube_intersect, MultiPolygon):
@@ -213,7 +213,7 @@ class Bumper:
         print('first mag size', self.magwidth1 * ratio, self.magwidth2 * ratio)
         print('second mag size', self.magwidth3 * ratio)
 
-    def clone_bumper(self):  # creates an identical bumper, but does not end the lattice
+    def clone_bumper(self, print_code=False):  # creates an identical bumper, but does not end the lattice
         delta_x = self.r2 * 1.5 * np.cos(self.phi)
         delta_y = self.r2 * 1.5 * np.sin(self.phi)
         a1 = np.tan((self.L - delta_y) / (self.d1 - self.r1p2 * 1.5 - delta_x))
@@ -229,6 +229,16 @@ class Bumper:
         PTL.add_Drift(d_fix, .04, inputTiltAngle=-a1, outputTiltAngle=-a2)
         PTL.add_Halbach_Lens_Sim(self.r2, l2_plus_fringe)
         PTL.add_Drift(self.d2, .04)
+        if print_code:
+            print('def add_Kevin_Bumper_Elements(PTL):  # creates an identical bumper, but does not end the lattice')
+            print('assert PTL.initialLocation[0] == 0.0 and PTL.initialLocation[1] == 0.0')
+            print('PTL.initialLocation =', (self.long_off, self.start))
+            print('PTL.add_Halbach_Lens_Sim(', (self.r1p1, self.r1p2), ',', l1_plus_fringe, ', magnetWidth=',
+                  (self.magwidth1, self.magwidth2), ')')
+            print('PTL.add_Drift(', d_fix, ', .04, inputTiltAngle=', -a1, ', outputTiltAngle=', -a2, ')')
+            print('PTL.add_Halbach_Lens_Sim(', self.r2, ',', l2_plus_fringe, ')')
+            print('PTL.add_Drift(', self.d2, ', .04', ')')
+            print('return PTL')
         return PTL
 
 
@@ -245,9 +255,18 @@ class Bumper:
 #          opt_norm[4] * phi_norm, opt_norm[5] * r_norm, opt_norm[6] * l_norm, opt_norm[7] * d_norm - 0.01,
 #          opt_norm[8] * st_norm]
 
-KevinBumper = Bumper(0.0271, (9 + 7 / 8) * 0.0254, 0.3082, -0.0256, 0.0849, 0.0208, (4 + 3 / 8) * 0.0254, 0.1603, 500,
-                     focus_off=-0.03, start=-0.0127, actual_he=True,
-                     real_mag=(1 / 2 * 0.0254, 3 / 4 * 0.0254, 3 / 8 * 0.0254))
+
+# KevinBumper = Bumper(0.0271, (9 + 7 / 8) * 0.0254, 0.3184, -0.0259, 0.088, 0.0208, (4 + 3 / 8) * 0.0254, 0.178, 500,
+#                      focus_off=-0.03, start=-0.0125, actual_he=True,
+#                      real_mag=(1 / 2 * 0.0254, 3 / 4 * 0.0254, 3 / 8 * 0.0254))
+
+
+mag_unc = 0.01 / np.sin(5 * np.pi / 12) * 0.0254
+width_to_r = np.tan(np.pi / 12) * 2
+KevinBumper = Bumper((0.5 * 0.0254 + mag_unc) / width_to_r, (8 + 1 / 4) * 0.0254, 0.2084, -0.0195, 0.105,
+                     (0.375 * 0.0254 + mag_unc) / width_to_r, 4 * 0.0254, 0.085, 500, focus_off=-0.03,
+                     start=-0.012, actual_he=True, real_mag=(1 / 2 * 0.0254, 3 / 4 * 0.0254, 3 / 8 * 0.0254),
+                     long_off=0, leftwards=True)
 
 # test_bumper = Bumper(opt_p[0], opt_p[1], opt_p[2], opt_p[3], opt_p[4], opt_p[5], opt_p[6], opt_p[7], 500,
 #                      focus_off=-0.03, start=opt_p[8], actual_he=True)
@@ -267,4 +286,3 @@ if __name__ == '__main__':
     KevinBumper.plot_phase()
     KevinBumper.obj_q, KevinBumper.obj_p, KevinBumper.im_q, KevinBumper.im_p = KevinBumper.get_phase(coord=2)
     KevinBumper.plot_phase()
-
