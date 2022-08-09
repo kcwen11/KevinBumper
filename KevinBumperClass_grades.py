@@ -34,8 +34,8 @@ def y0_max(r, b_max):
 
 class Bumper:
     def __init__(self, r1p1, l1, d1, L, phi, r2, l2, d2, n, start=None, leftwards=False, long_off=None, trace=True,
-                 focus_off=0.0, he_leeway=None, real_mag=None, grade=(['N42', 'N52'], ['N52']), r1p2=None,
-                 ap=(None, None), fdm=1, magnet_error=False):
+                 focus_off=0.0, he_leeway=None, real_mag=None, grade=(['N42', 'N42'], ['N52']), r1p2=None,
+                 ap=(None, None), fdm=1, magnet_error=False, mesh_first=False):
         self.r1p1 = r1p1
         self.magwidth1 = r1p1 * np.tan(np.pi / 12) * 2 if real_mag is None else real_mag[0]
         self.r1p2 = r1p1 + r1p1 * np.tan(np.pi / 12) * 2 if r1p2 is None else r1p2
@@ -60,6 +60,7 @@ class Bumper:
         assert focus_off <= 0
         self.focus_off = focus_off
 
+        self.do_I_mesh_this = mesh_first
         self.PTL: ParticleTracerLattice = self.create_lattice(fdm, magnet_error)
 
         self.helium_tube = self.create_he_tube(l1 + self.r1p2 * 3 + d1 + l2 + r2 * 3 + d2, extra_width=he_leeway)
@@ -82,7 +83,7 @@ class Bumper:
                                     initialLocation=(self.long_off, self.start), magnetGrade=self.grade,
                                     fieldDensityMultiplier=fdm, standardMagnetErrors=mag_err)
         PTL.add_Halbach_Lens_Sim((self.r1p1, self.r1p2), l1_plus_fringe,
-                                 magnetWidth=(self.magwidth1, self.magwidth2), ap=self.ap[0])
+                                 magnetWidth=(self.magwidth1, self.magwidth2), ap=self.ap[0], mesh=self.do_I_mesh_this)
         PTL.add_Drift(d_fix, .04, inputTiltAngle=a1, outputTiltAngle=a2)
         PTL.add_Halbach_Lens_Sim(self.r2, l2_plus_fringe, magnetWidth=self.magwidth3, ap=self.ap[1])
         PTL.add_Drift(self.d2, .04)
@@ -188,13 +189,13 @@ class Bumper:
         return np.array(nbrs.kneighbors(im)[0])
 
     def size_penalty(self):  # the displacement L is negative, we want more
-        return 5 * self.L - 8 * np.abs(self.start)  # + 15 * self.r1p2 + 3 * self.l1 + 3 * self.l2
+        return 5 * self.L - 8 * np.abs(self.start) + 3 * self.l1 + 3 * self.l2 + self.d1 + self.d2  # + 15 * self.r1p2
 
     def cost(self, area_cost=True, image_cost=True, size_cost=True, alignment_cost=False):
         area = self.he_tube_intersect.area if area_cost else 0
-        im_qual = np.sum(self.image_quality() ** 2) * 500 / len(self.im_q) if image_cost else 0
+        im_qual = np.sum(self.image_quality() ** 4) * 50000 / len(self.im_q) if image_cost else 0
         size_p = self.size_penalty() if size_cost else 0
-        alignment_p = self.alignment()[0] * 25 + self.alignment()[1] * 10 if alignment_cost else 0
+        alignment_p = self.alignment()[0] ** 2 * 25 + self.alignment()[1] ** 2 * 10 if alignment_cost else 0
         return im_qual + np.exp(area * 5000) - 1 + size_p + alignment_p
 
     def alignment(self):
@@ -224,13 +225,13 @@ class Bumper:
         print('#' * 100)
 
     def clone_bumper(self, print_code=False):  # creates an identical bumper, but does not end the lattice
-        delta_x = self.r2 * 1.5 * np.cos(self.phi)
-        delta_y = self.r2 * 1.5 * np.sin(self.phi)
-        a1 = np.tan((self.L - delta_y) / (self.d1 - self.r1p2 * 1.5 - delta_x))
-        a2 = a1 + self.phi
-        d_fix = np.sqrt((self.L - delta_y) ** 2 + (self.d1 - self.r1p2 * 1.5 - delta_x) ** 2)
-        l1_plus_fringe = self.l1 + self.r1p2 * 3
-        l2_plus_fringe = self.l2 + self.r2 * 3
+        delta_x = self.r2*1.5*np.cos(self.phi)
+        delta_y = self.r2*1.5*np.sin(self.phi)
+        a1 = np.arctan((-self.L-delta_y)/(self.d1-self.r1p2*1.5-delta_x))
+        a2 = a1-self.phi
+        d_fix = np.sqrt((-self.L-delta_y)**2+(self.d1-self.r1p2*1.5-delta_x)**2)
+        l1_plus_fringe = self.l1+self.r1p2*3
+        l2_plus_fringe = self.l2+self.r2*3
 
         PTL = ParticleTracerLattice(latticeType='injector', initialAngle=self.angle,
                                     initialLocation=(self.long_off, self.start))
@@ -259,34 +260,38 @@ class Bumper:
 # phi_norm = 0.2
 # st_norm = 0.02
 
-mag_unc = 0.01 / np.sin(5 * np.pi / 12) * 0.0254
-width_to_r = np.tan(np.pi / 12) * 2
-norms = np.array([0.25, 0.25, 0.1, 0.2, 0.25, 0.25, 0.02])
-opt_norm = np.array([0.78673475, 0.90902777, -0.28873075, 0.48801183, 0.38727179, 0.30644874, -0.59659866])
-opt_p = opt_norm * norms
+# norms = np.array([0.5, 0.5, 0.1, 0.2, 0.25, 0.25, 0.02])
+# opt_norm = np.array([0.37656675, 0.83548451, -0.42736662, 0.46024255, 0.43031401, 0.76274515, -0.58230727])
+# opt_p = opt_norm * norms
 
-KevinBumper = Bumper((0.5 * 0.0254 + mag_unc) / width_to_r, opt_p[0], opt_p[1] + 0.15, opt_p[2] - 0.01, opt_p[3],
-                     (0.5 * 0.0254 + mag_unc) / width_to_r, opt_p[4], opt_p[5] + 0.15, 500, focus_off=-0.03,
-                     start=opt_p[6], he_leeway=0.00127, real_mag=(1 / 2 * 0.0254, 3 / 4 * 0.0254, 1 / 2 * 0.0254),
-                     long_off=0, leftwards=False, trace=False)
+# mag_unc = 0.01 / np.sin(5 * np.pi / 12) * 0.0254
+# width_to_r = np.tan(np.pi / 12) * 2
+# norms = np.array([0.25, 0.25, 0.1, 0.2, 0.25, 0.25, 0.02])
+# opt_norm = np.array([0.77465948,  1.68598647, -0.41340418,  0.48585299,  0.45232657, 0.76736094, -0.57018616])
+# opt_p = opt_norm * norms
+#
+# KevinBumper = Bumper((0.5 * 0.0254 + mag_unc) / width_to_r, opt_p[0], opt_p[1], opt_p[2] + 0.001, opt_p[3] - 0.004,
+#                      (0.5 * 0.0254 + mag_unc) / width_to_r, opt_p[4], opt_p[5] - 0.01, 500, focus_off=-0.03,
+#                      start=opt_p[6], he_leeway=0.00127, real_mag=(1 / 2 * 0.0254, 3 / 4 * 0.0254, 1 / 2 * 0.0254),
+#                      long_off=0, leftwards=False, ap=(0.825 * 0.0254, 0.825 * 0.0254), trace=False)
 
 # test_bumper = Bumper(opt_p[0], opt_p[1], opt_p[2], opt_p[3], opt_p[4], opt_p[5], opt_p[6], opt_p[7], 500,
 #                      focus_off=-0.03, start=opt_p[8], actual_he=True)
 
 
-# mag_unc = 0.01 / np.sin(5 * np.pi / 12) * 0.0254
-# width_to_r = np.tan(np.pi / 12) * 2
-# KevinBumper = Bumper((0.5 * 0.0254 + mag_unc) / width_to_r, (7 + 7/8) * 0.0254, 0.231, -0.027, 0.106,
-#                      (0.375 * 0.0254 + mag_unc) / width_to_r, (4 + 1/8) * 0.0254, 0.085, 500, focus_off=-0.03,
-#                      start=-0.0123, he_leeway=0.00127, real_mag=(1/2 * 0.0254, 3/4 * 0.0254, 3/8 * 0.0254),
-#                      long_off=0, leftwards=False, ap=(0.825 * 0.0254, 0.575 * 0.0254), trace=False)
+mag_unc = 0.01 / np.sin(5 * np.pi / 12) * 0.0254
+width_to_r = np.tan(np.pi / 12) * 2
+KevinBumper = Bumper((0.5 * 0.0254 + mag_unc) / width_to_r, (7 + 1/2) * 0.0254, 0.421, -0.04, 0.094,
+                     (0.5 * 0.0254 + mag_unc) / width_to_r, (4 + 1/2) * 0.0254, 0.182, 500, focus_off=-0.03,
+                     start=-0.0114, he_leeway=0.00127, real_mag=(1/2 * 0.0254, 3/4 * 0.0254, 1/2 * 0.0254),
+                     long_off=0, leftwards=False, ap=(0.825 * 0.0254, 0.825 * 0.0254), trace=False, mesh_first=False)
 
 
 def recreate_bumper(n, field_mult=1, mag_err=False):
-    remake = Bumper((0.5 * 0.0254 + mag_unc) / width_to_r, (7 + 7/8) * 0.0254, 0.231, -0.027, 0.106,
-                    (0.375 * 0.0254 + mag_unc) / width_to_r, (4 + 1/8) * 0.0254, 0.085, n, focus_off=-0.03,
-                    start=-0.0123, he_leeway=0.00127, real_mag=(1/2 * 0.0254, 3/4 * 0.0254, 3/8 * 0.0254),
-                    long_off=0, leftwards=False, ap=(0.825 * 0.0254, 0.575 * 0.0254), fdm=field_mult,
+    remake = Bumper((0.5 * 0.0254 + mag_unc) / width_to_r, (7 + 1/2) * 0.0254, 0.421, -0.04, 0.094,
+                    (0.5 * 0.0254 + mag_unc) / width_to_r, (4 + 1/2) * 0.0254, 0.182, n, focus_off=-0.03,
+                    start=-0.0114, he_leeway=0.00127, real_mag=(1/2 * 0.0254, 3/4 * 0.0254, 1/2 * 0.0254),
+                    long_off=0, leftwards=False, ap=(0.825 * 0.0254, 0.825 * 0.0254), fdm=field_mult,
                     magnet_error=mag_err)
     return remake
 
@@ -304,8 +309,10 @@ if __name__ == '__main__':
     trace_kevin_bumper(fast=False)
     print('position and angle alignment', KevinBumper.alignment())
     KevinBumper.plot_trace()
-    print('quality (low is better)', KevinBumper.cost(size_cost=True))
+    print('quality (low is better)', KevinBumper.cost(size_cost=False))
     KevinBumper.plot_phase()
     KevinBumper.obj_q, KevinBumper.obj_p, KevinBumper.im_q, KevinBumper.im_p = KevinBumper.get_phase(coord=2)
     KevinBumper.plot_phase()
-    # KevinBumper.swarm.particles[random.randint(0, len(KevinBumper.swarm.particles) - 1)].plot_Energies()
+    KevinBumper.swarm.particles[random.randint(0, len(KevinBumper.swarm.particles) - 1)].plot_Energies()
+
+
