@@ -6,6 +6,14 @@ from SwarmTracerClass import SwarmTracer
 from helperTools import *
 from shapely.geometry import Polygon, MultiPolygon
 from sklearn.neighbors import NearestNeighbors
+import matplotlib as mpl
+mpl.rcParams['axes.linewidth'] = 1.5
+mpl.rcParams['xtick.major.width'] = 1.75
+mpl.rcParams['ytick.major.width'] = 1.75
+mpl.rcParams['xtick.major.size'] = 6
+mpl.rcParams['ytick.major.size'] = 6
+mpl.rcParams["errorbar.capsize"] = 4
+
 
 #  made 6/17/2022, after four rounds of optimizing.
 #  use KevinBumper.clone_bumper() to create an identical bumper without an end, so more elements can be added.
@@ -35,12 +43,13 @@ def y0_max(r, b_max):
 class Bumper:
     def __init__(self, r1p1, l1, d1, L, phi, r2, l2, d2, n, start=None, leftwards=False, long_off=None, trace=True,
                  focus_off=0.0, he_leeway=None, real_mag=None, grade=(['N42', 'N42'], ['N52']), r1p2=None,
-                 ap=(None, None), fdm=1, magnet_error=False, mesh_first=False):
+                 ap=(None, None), fdm=1, magnet_error=False, mesh_first=False, mesh_second=False, hk=(None, None)):
         self.r1p1 = r1p1
         self.magwidth1 = r1p1 * np.tan(np.pi / 12) * 2 if real_mag is None else real_mag[0]
         self.r1p2 = r1p1 + r1p1 * np.tan(np.pi / 12) * 2 if r1p2 is None else r1p2
         self.magwidth2 = self.r1p2 * np.tan(np.pi / 12) * 2 if real_mag is None else real_mag[1]
         self.grade = grade
+        self.hk = hk
         self.ap = ap
 
         self.l1 = l1
@@ -61,6 +70,7 @@ class Bumper:
         self.focus_off = focus_off
 
         self.do_I_mesh_this = mesh_first
+        self.do_I_mesh_second = mesh_second
         self.PTL: ParticleTracerLattice = self.create_lattice(fdm, magnet_error)
 
         self.helium_tube = self.create_he_tube(l1 + self.r1p2 * 3 + d1 + l2 + r2 * 3 + d2, extra_width=he_leeway)
@@ -81,12 +91,14 @@ class Bumper:
 
         PTL = ParticleTracerLattice(latticeType='injector', initialAngle=self.angle,
                                     initialLocation=(self.long_off, self.start), magnetGrade=self.grade,
-                                    fieldDensityMultiplier=fdm, standardMagnetErrors=mag_err)
+                                    fieldDensityMultiplier=fdm, standardMagnetErrors=mag_err, hk_list=self.hk)
         PTL.add_Halbach_Lens_Sim((self.r1p1, self.r1p2), l1_plus_fringe,
                                  magnetWidth=(self.magwidth1, self.magwidth2), ap=self.ap[0], mesh=self.do_I_mesh_this)
         PTL.add_Drift(d_fix, .04, inputTiltAngle=a1, outputTiltAngle=a2)
-        PTL.add_Halbach_Lens_Sim(self.r2, l2_plus_fringe, magnetWidth=self.magwidth3, ap=self.ap[1])
+        PTL.add_Halbach_Lens_Sim(self.r2, l2_plus_fringe, magnetWidth=self.magwidth3, ap=self.ap[1],
+                                 mesh=self.do_I_mesh_second)
         PTL.add_Drift(self.d2, .04)
+
         PTL.end_Lattice()
         return PTL
 
@@ -105,10 +117,21 @@ class Bumper:
         st = SwarmTracer(self.PTL)
         swarm = st.initialize_Simulated_Collector_Focus_Swarm(n)
 
+        warp = 1.0
+        for particle in swarm:
+            particle.pi[1] *= warp
+            particle.pi[2] *= warp
+            particle.qi[1] /= warp
+            particle.qi[2] /= warp
+
+            # particle.qi[1] *= 10 ** -5
+            # particle.qi[2] *= 10 ** -5
+
+
         # turn stuff around, project backwards
         if not self.leftwards:
             for particle in swarm:
-                particle.pi[0] *= -1
+                particle.pi[0] *= -1  # EDIT for different focus
                 particle.obj_qi = particle.qi.copy()
                 t = (-self.r1p2 * 1.5 - self.focus_off + particle.qi[0]) / particle.pi[0]
                 particle.qi[0] = self.long_off + 10 ** -4
@@ -125,7 +148,8 @@ class Bumper:
         swarm = st.trace_Swarm_Through_Lattice(swarm, time_step, 1.0, fastMode=fast)
         return swarm
 
-    def plot_trace(self):
+    def plot_trace(self, saveTitle=None):
+        plt.tick_params(axis='both', direction='in', top='true', right='true')
         plt.plot(*self.helium_tube.exterior.xy, color='blue')
         plt.plot(*self.helium_traj.exterior.xy, linestyle=':', color='blue')
         if isinstance(self.he_tube_intersect, Polygon):
@@ -133,7 +157,10 @@ class Bumper:
         elif isinstance(self.he_tube_intersect, MultiPolygon):
             for geom in self.he_tube_intersect.geoms:
                 plt.plot(*geom.exterior.xy, color='red')
-        self.PTL.show_Lattice(plotOuter=True, plotInner=True, swarm=self.swarm, showTraceLines=True, traceLineAlpha=.25)
+        plt.rc('xtick', labelsize=24)  # fontsize of the tick labels
+        plt.rc('ytick', labelsize=24)  # fontsize of the tick labels
+        self.PTL.show_Lattice(plotOuter=True, plotInner=True, swarm=self.swarm, showTraceLines=True, traceLineAlpha=.25,
+                              saveTitle=saveTitle)
 
     def get_phase(self, coord=1, save=False, name='kevin_bumper_phase.txt'):
         assert coord == 1 or coord == 2 or coord == 0
@@ -171,8 +198,9 @@ class Bumper:
         return obj_q, obj_p, im_q, im_p
 
     def plot_phase(self):
-        plt.plot(self.obj_q, self.obj_p, 'bo')
-        plt.plot(self.im_q, self.im_p, 'go')
+        plt.plot(self.obj_q, self.obj_p, 'bo', label='Object')
+        plt.plot(self.im_q, self.im_p, 'go', label='Image')
+        plt.legend()
         plt.show()
 
     def tube_intersection(self):
@@ -252,7 +280,6 @@ class Bumper:
             print('return PTL')
         return PTL
 
-
 # r_norm = 0.05  # constants I use so that the gradient descent parameters are all on similar scales
 # l_norm = 0.25
 # d_norm = 0.25
@@ -279,12 +306,15 @@ class Bumper:
 #                      focus_off=-0.03, start=opt_p[8], actual_he=True)
 
 
-mag_unc = 0.01 / np.sin(5 * np.pi / 12) * 0.0254
+mag_unc = 0.01 * 0.0254
 width_to_r = np.tan(np.pi / 12) * 2
-KevinBumper = Bumper((0.5 * 0.0254 + mag_unc) / width_to_r, (7 + 1/2) * 0.0254, 0.421, -0.04, 0.094,
-                     (0.5 * 0.0254 + mag_unc) / width_to_r, (4 + 1/2) * 0.0254, 0.182, 500, focus_off=-0.03,
+KevinBumper = Bumper((0.51 * 0.0254 + mag_unc) / width_to_r, (7 + 1/2) * 0.0254, 0.421, -0.038, 0.093,
+                     (0.51 * 0.0254 + mag_unc) / width_to_r, (4 + 1/2) * 0.0254, 0.182, 500, focus_off=-0.03,
                      start=-0.0114, he_leeway=0.00127, real_mag=(1/2 * 0.0254, 3/4 * 0.0254, 1/2 * 0.0254),
-                     long_off=0, leftwards=False, ap=(0.825 * 0.0254, 0.825 * 0.0254), trace=False, mesh_first=False)
+                     long_off=0, leftwards=False, ap=(0.805 * 0.0254, 0.805 * 0.0254), trace=False, hk=(14.75, 10),
+                     r1p2=(1.9 - 0.75 / 2) * 0.0254)
+#  with mesh quality 0.39654434764912216
+#  without 0.39869993081704314
 
 
 def recreate_bumper(n, field_mult=1, mag_err=False):
@@ -308,11 +338,16 @@ if __name__ == '__main__':
 
     trace_kevin_bumper(fast=False)
     print('position and angle alignment', KevinBumper.alignment())
-    KevinBumper.plot_trace()
+    plt.title('Traced Trajectory of Lithium Beam')
+    plt.xlabel('z position $(m)$')
+    plt.ylabel('x position $(m)$')
+    KevinBumper.plot_trace(saveTitle='trace.png')
     print('quality (low is better)', KevinBumper.cost(size_cost=False))
+    plt.title('Object vs Image Phase Space Distribution')
+    plt.xlabel('x position spread from mean $(m)$')
+    plt.ylabel('x velocity spread from mean $(m)$')
     KevinBumper.plot_phase()
     KevinBumper.obj_q, KevinBumper.obj_p, KevinBumper.im_q, KevinBumper.im_p = KevinBumper.get_phase(coord=2)
     KevinBumper.plot_phase()
     KevinBumper.swarm.particles[random.randint(0, len(KevinBumper.swarm.particles) - 1)].plot_Energies()
-
 

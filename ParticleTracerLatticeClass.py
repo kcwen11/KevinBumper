@@ -25,7 +25,7 @@ class ParticleTracerLattice:
     def __init__(self, v0Nominal: float = DEFAULT_ATOM_SPEED, latticeType: str = 'storageRing',
                  jitterAmp: float = 0.0, fieldDensityMultiplier: float = 1.0, standardMagnetErrors: bool = False,
                  useSolenoidField: bool = False, initialLocation: tuple[float, float] = None, initialAngle=None,
-                 magnetGrade: str = 'N52'):
+                 magnetGrade: str = 'N52', hk_list=(None, None)):
         assert fieldDensityMultiplier > 0.0
         if latticeType != 'storageRing' and latticeType != 'injector':
             raise Exception('invalid lattice type provided')
@@ -53,6 +53,7 @@ class ParticleTracerLattice:
 
         self.isClosed = None  # is the lattice closed, ie end and beginning are smoothly connected?
         self.magnetGrade = magnetGrade
+        self.hk_list = hk_list
         self.useSolenoidField = useSolenoidField
 
         self.elList: list[Element] = []  # to hold all the lattice elements
@@ -431,8 +432,8 @@ class ParticleTracerLattice:
         plt.grid()
         if trueAspectRatio:
             plt.gca().set_aspect('equal')
-        plt.xlabel('meters')
-        plt.ylabel('meters')
+        plt.xlabel('meters', fontsize=14)
+        plt.ylabel('meters', fontsize=14)
         if saveTitle is not None:
             plt.savefig(saveTitle, dpi=dpi)
         plt.show()
