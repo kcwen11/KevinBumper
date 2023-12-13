@@ -194,7 +194,7 @@ class billyHalbachCollectionWrapper(Collection):
         BVec = mTesla_To_Tesla * self._getB_Wrapper(evalCoords_mm)
         return BVec
 
-    def H_Vec(self, evalCoords: np.ndarray, useApprox: int = False, units='kOe') -> np.ndarray:
+    def H_Vec(self, evalCoords: np.ndarray, useApprox: int = False, units = 'kOe') -> np.ndarray:
         # r: Coordinates to evaluate at with dimension (N,3) where N is the number of evaluate points
         assert len(self) > 0
         if useApprox:
@@ -205,14 +205,14 @@ class billyHalbachCollectionWrapper(Collection):
         HVec = conversion[units] * self._getH_Wrapper(evalCoords_mm)
         return HVec
 
-    def M_Vec(self, evalCoords: np.ndarray, useApprox: int = False) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def M_Vec(self, evalCoords: np.ndarray, useApprox: int = False) -> np.ndarray:
         HVec = self.H_Vec(evalCoords, useApprox, units='A/m')
-        BVec = self.B_Vec(evalCoords, useApprox)
-        return 1 / MAGNETIC_PERMEABILITY * BVec - HVec
+        Bvec = self.B_Vec(evalCoords, useApprox)
+        return 1 / MAGNETIC_PERMEABILITY * Bvec - HVec
 
     def BNorm(self, evalCoords: np.ndarray, useApprox: bool = False) -> np.ndarray:
-        # r: coordinates to evaluate the field at. Either a (N,3) array, where N is the number of points,
-        # or a (3) array. Returns a either a (N,3) or (3) array, whichever matches the shape of the r array
+        # r: coordinates to evaluate the field at. Either a (N,3) array, where N is the number of points, or a (3) array.
+        # Returns a either a (N,3) or (3) array, whichever matches the shape of the r array
 
         BVec = self.B_Vec(evalCoords, useApprox=useApprox)
         if len(evalCoords.shape) == 1:
@@ -335,7 +335,7 @@ class Layer(billyHalbachCollectionWrapper):
         assert len(variableArr) == self.numMagnetsInLayer and len(variableArr.shape) == 2
         return variableArr
 
-    def build(self, do_I_mesh_this=False, nnn=(6, 6, 1)) -> None:
+    def build(self, do_I_mesh_this=False, nnn=(4, 4, 6)) -> None:
         # build the elements that form the layer. The 'home' magnet's center is located at x=r0+width/2,y=0, and its
         # magnetization points along positive x
         # how I do this is confusing
@@ -710,8 +710,8 @@ class SegmentedBenderHalbach(billyHalbachCollectionWrapper):
 
         coilDiam = METER_TO_mm * 2 * max_Tube_Radius_In_Segmented_Bend(self.rb, self.rp, self.Lm,
                                                                        tubeWallThickness=MAGNET_WIRE_DIAM)
-        angleStart = self.lensAnglesArr[0] if self.useHalfCapEnd[0] else self.lensAnglesArr[0] - self.UCAngle
-        angleEnd = self.lensAnglesArr[-1] if self.useHalfCapEnd[1] else self.lensAnglesArr[-1] + self.UCAngle
+        angleStart= self.lensAnglesArr[0] if self.useHalfCapEnd[0] else self.lensAnglesArr[0]-self.UCAngle
+        angleEnd=self.lensAnglesArr[-1] if self.useHalfCapEnd[1] else self.lensAnglesArr[-1]+self.UCAngle
         circumference = self.rb * (angleEnd - angleStart)
         numCoils = max([round(COILS_PER_RADIUS * circumference / self.rp), 1])
         B_dot_dl = SPIN_FLIP_AVOIDANCE_FIELD * circumference  # amperes law
